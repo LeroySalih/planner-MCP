@@ -1,0 +1,11 @@
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - MCP_SERVICE_KEY=${MCP_SERVICE_KEY}
+    restart: unless-stopped
