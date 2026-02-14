@@ -71,11 +71,52 @@ app.delete('/mcp', validateMcpKey, async (req, res) => {
   sessions.delete(sessionId);
 });
 
-// Start server
-const server = app.listen(config.server.port, () => {
-  console.log(`MCP server listening on port ${config.server.port}`);
-  console.log(`Health check: http://localhost:${config.server.port}/health`);
-});
+// Startup checks: verify config, database connection, and data access
+async function startupChecks(): Promise<void> {
+  console.log('Running startup checks...');
+
+  // 1. Check required environment variables
+  const required = ['DATABASE_URL', 'MCP_SERVICE_KEY'];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length > 0) {
+    console.error(`Missing required environment variables: ${missing.join(', ')}`);
+    process.exit(1);
+  }
+  console.log('Environment variables: OK');
+
+  // 2. Test database connection
+  const dbOk = await db.testConnection();
+  if (!dbOk) {
+    console.error('Cannot connect to database. Exiting.');
+    process.exit(1);
+  }
+  console.log('Database connection: OK');
+
+  // 3. Verify we can read from the units table
+  try {
+    const result = await db.query('SELECT COUNT(*) AS count FROM units');
+    const unitCount = parseInt(result.rows[0].count, 10);
+    console.log(`Units table: OK (${unitCount} units found)`);
+  } catch (error) {
+    console.error('Failed to read units table:', error);
+    process.exit(1);
+  }
+}
+
+// Start server after startup checks pass
+let httpServer: ReturnType<typeof app.listen>;
+
+startupChecks()
+  .then(() => {
+    httpServer = app.listen(config.server.port, () => {
+      console.log(`MCP server listening on port ${config.server.port}`);
+      console.log(`Health check: http://localhost:${config.server.port}/health`);
+    });
+  })
+  .catch((err) => {
+    console.error('Startup checks failed:', err);
+    process.exit(1);
+  });
 
 // Graceful shutdown
 async function shutdown() {
@@ -85,7 +126,7 @@ async function shutdown() {
     sessions.delete(id);
   }
   await db.close();
-  server.close(() => {
+  httpServer.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
