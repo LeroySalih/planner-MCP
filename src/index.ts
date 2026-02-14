@@ -10,65 +10,115 @@ import { db } from './db/client';
 const app = express();
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const { method, path } = req;
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const status = res.statusCode;
+    const level = status >= 500 ? 'ERROR' : status >= 400 ? 'WARN' : 'INFO';
+    console.log(
+      `[${level}] ${method} ${path} ${status} ${duration}ms`
+    );
+  });
+
+  next();
+});
+
 // Session management
 const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
 
 // Health check (public)
 app.get('/health', async (_req, res) => {
-  const dbOk = await db.testConnection();
-  res.json({
-    status: dbOk ? 'ok' : 'degraded',
-    database: dbOk ? 'connected' : 'disconnected',
-  });
+  try {
+    const dbOk = await db.testConnection();
+    res.json({
+      status: dbOk ? 'ok' : 'degraded',
+      database: dbOk ? 'connected' : 'disconnected',
+    });
+  } catch (error) {
+    console.error(`[ERROR] GET /health - ${(error as Error).message}`);
+    res.status(500).json({ error: 'Health check failed' });
+  }
 });
 
 // MCP routes (authenticated)
 app.post('/mcp', validateMcpKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  try {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-  if (sessionId && sessions.has(sessionId)) {
-    const session = sessions.get(sessionId)!;
-    await session.transport.handleRequest(req, res, req.body);
-    return;
+    if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId)!;
+      await session.transport.handleRequest(req, res, req.body);
+      return;
+    }
+
+    // New session: create transport, server, and connect
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => {
+        console.log(`[SESSION] New session created: ${id}`);
+        sessions.set(id, { server, transport });
+      },
+    });
+
+    transport.onclose = () => {
+      const id = transport.sessionId;
+      if (id) {
+        console.log(`[SESSION] Session closed: ${id}`);
+        sessions.delete(id);
+      }
+    };
+
+    const server = createMcpServer();
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error(`[ERROR] POST /mcp - ${(error as Error).message}`, (error as Error).stack);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
-
-  // New session: create transport, server, and connect
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (id) => {
-      sessions.set(id, { server, transport });
-    },
-  });
-
-  transport.onclose = () => {
-    const id = transport.sessionId;
-    if (id) sessions.delete(id);
-  };
-
-  const server = createMcpServer();
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
 });
 
 app.get('/mcp', validateMcpKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !sessions.has(sessionId)) {
-    res.status(400).json({ error: 'Invalid or missing session ID' });
-    return;
+  try {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      console.warn(`[WARN] GET /mcp - Invalid or missing session ID: ${sessionId ?? '(none)'}`);
+      res.status(400).json({ error: 'Invalid or missing session ID' });
+      return;
+    }
+    const session = sessions.get(sessionId)!;
+    await session.transport.handleRequest(req, res);
+  } catch (error) {
+    console.error(`[ERROR] GET /mcp - ${(error as Error).message}`, (error as Error).stack);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
-  const session = sessions.get(sessionId)!;
-  await session.transport.handleRequest(req, res);
 });
 
 app.delete('/mcp', validateMcpKey, async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  if (!sessionId || !sessions.has(sessionId)) {
-    res.status(400).json({ error: 'Invalid or missing session ID' });
-    return;
+  try {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    if (!sessionId || !sessions.has(sessionId)) {
+      console.warn(`[WARN] DELETE /mcp - Invalid or missing session ID: ${sessionId ?? '(none)'}`);
+      res.status(400).json({ error: 'Invalid or missing session ID' });
+      return;
+    }
+    const session = sessions.get(sessionId)!;
+    await session.transport.handleRequest(req, res);
+    console.log(`[SESSION] Session deleted: ${sessionId}`);
+    sessions.delete(sessionId);
+  } catch (error) {
+    console.error(`[ERROR] DELETE /mcp - ${(error as Error).message}`, (error as Error).stack);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
-  const session = sessions.get(sessionId)!;
-  await session.transport.handleRequest(req, res);
-  sessions.delete(sessionId);
 });
 
 // Startup checks: verify config, database connection, and data access

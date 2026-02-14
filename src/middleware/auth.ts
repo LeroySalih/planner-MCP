@@ -13,6 +13,7 @@ export const validateMcpKey = (req: Request, res: Response, next: NextFunction):
   const providedKey = authHeader?.replace('Bearer ', '') || mcpKey;
 
   if (!providedKey) {
+    console.warn(`[AUTH] 401 ${req.method} ${req.path} - Missing MCP service key`);
     res.status(401).json({
       error: 'Unauthorized',
       message: 'MCP service key required. Provide via Authorization header or x-mcp-key header.',
@@ -21,6 +22,7 @@ export const validateMcpKey = (req: Request, res: Response, next: NextFunction):
   }
 
   if (providedKey !== config.mcp.serviceKey) {
+    console.warn(`[AUTH] 403 ${req.method} ${req.path} - Invalid MCP service key`);
     res.status(403).json({
       error: 'Forbidden',
       message: 'Invalid MCP service key',
