@@ -6,6 +6,12 @@ services:
     environment:
       - PORT=4000
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgresql://postgres:your-super-secret-and-long-postgres-password@postgres17:5432/postgres?sslmode=disable
       - MCP_SERVICE_KEY=${MCP_SERVICE_KEY}
+    networks:
+      - postgres_default
     restart: unless-stopped
+
+networks:
+  postgres_default:
+    external: true
