@@ -20,7 +20,7 @@ export interface DbActivity {
   activity_id: string;
   lesson_id: string;
   title: string;
-  type: string; // 'multiple-choice-question' | 'short-text-question' | 'upload-file'
+  type: string; // 'multiple-choice-question' | 'short-text-question' | 'text'
   body_data: any; // JSONB
   order_by: number | null;
   active: boolean;
@@ -47,7 +47,7 @@ export interface ApiResponse<T = any> {
 export interface CreateActivityInput {
   lesson_id: string;
   title: string;
-  type: 'multiple-choice-question' | 'short-text-question' | 'upload-file';
+  type: 'multiple-choice-question' | 'short-text-question' | 'text';
   body_data: any;
   order_by?: number;
   is_summative?: boolean;
